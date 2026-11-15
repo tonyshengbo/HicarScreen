@@ -97,11 +97,11 @@ class MicRecorder(private val context: Context) {
 
         val internalBufferSize = maxOf(minBufSize * 2, chunkSize * 4)
 
-        // Try MIC source first (reliable across all hardware without missing tuning cfg), fallback to VOICE_RECOGNITION
+        // Try VOICE_RECOGNITION source first (enables hardware AGC & noise suppressor), fallback to MIC
         var record: AudioRecord? = null
         val sources = intArrayOf(
-            MediaRecorder.AudioSource.MIC,
-            MediaRecorder.AudioSource.VOICE_RECOGNITION
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            MediaRecorder.AudioSource.MIC
         )
 
         for (source in sources) {
@@ -176,11 +176,20 @@ class MicRecorder(private val context: Context) {
                 if (read > 0) {
                     totalBytesRead += read
 
-                    // Calculate amplitude for audio level diagnostics
+                    // Apply digital gain (5.0x boost) with saturation clamping to ensure clear voice recognition
+                    val digitalGain = 5.0f
                     var maxAmp = 0
                     for (i in 0 until read - 1 step 2) {
-                        val sample = (buffer[i].toInt() and 0xFF) or (buffer[i + 1].toInt() shl 8)
-                        val abs = Math.abs(sample.toShort().toInt())
+                        val low = buffer[i].toInt() and 0xFF
+                        val high = buffer[i + 1].toInt()
+                        val originalSample = (high shl 8) or low
+                        var boosted = (originalSample.toShort() * digitalGain).toInt()
+                        if (boosted > 32767) boosted = 32767
+                        else if (boosted < -32768) boosted = -32768
+                        buffer[i] = (boosted and 0xFF).toByte()
+                        buffer[i + 1] = ((boosted shr 8) and 0xFF).toByte()
+
+                        val abs = Math.abs(boosted)
                         if (abs > maxAmp) maxAmp = abs
                     }
 

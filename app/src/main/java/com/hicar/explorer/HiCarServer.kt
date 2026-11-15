@@ -301,7 +301,7 @@ class HiCarServer(
                 out.write(frame)
                 out.flush()
             }
-            if (type != -19088893) {
+            if (type != -19088893 && type != -19088894) {
                 Log.i(TAG, "TX DMSDP Binary frame (module=$module, type=$type, payloadLen=${payload.size}, totalLen=$len)")
             }
         }
@@ -310,32 +310,15 @@ class HiCarServer(
         micRecorder.callback = object : com.hicar.explorer.media.MicRecorder.Callback {
             override fun onAudioFrame(dataSessionId: Int, pcmData: ByteArray, offset: Int, length: Int) {
                 try {
-                    // DMSDP Datagram wire format (expected by Session::TCPDatagramReadMore -> DataSession::OnDatagramNotify):
-                    // 6-byte datagram header: dataSessionId (4B BE) + payload length (2B BE)
-                    // followed directly by ADTS AAC audio frame (length bytes)
-                    val datagram = ByteArray(6 + length)
-                    datagram[0] = ((dataSessionId shr 24) and 0xFF).toByte()
-                    datagram[1] = ((dataSessionId shr 16) and 0xFF).toByte()
-                    datagram[2] = ((dataSessionId shr 8) and 0xFF).toByte()
-                    datagram[3] = (dataSessionId and 0xFF).toByte()
-                    datagram[4] = ((length shr 8) and 0xFF).toByte()
-                    datagram[5] = (length and 0xFF).toByte()
-                    System.arraycopy(pcmData, offset, datagram, 6, length)
-
-                    val useCrypto = isCryptoActive && btServer.getSessionKey() != null
-                    val magic = if (useCrypto) 0xAB.toByte() else 0x00.toByte()
-                    val body = if (useCrypto) encryptDmsdp(datagram) else datagram
-                    val totalLen = body.size
-                    val frame = ByteArray(3 + totalLen)
-                    frame[0] = magic
-                    frame[1] = ((totalLen shr 8) and 0xFF).toByte()
-                    frame[2] = (totalLen and 0xFF).toByte()
-                    System.arraycopy(body, 0, frame, 3, totalLen)
-
-                    synchronized(dmsdpOutLock) {
-                        out.write(frame)
-                        out.flush()
+                    // DMSDP Binary wire format:
+                    // [0x24 ('$') | dataSessionId (4B BE) | type (4B BE = -19088894 / 0xFEDCBA02) | length (2B BE) | ADTS AAC payload]
+                    // Dispatched to phone VirtualDeviceSink::ReceiveDeviceData -> TransNativeInterface.receiveDeviceData
+                    val audioPayload = if (offset == 0 && length == pcmData.size) {
+                        pcmData
+                    } else {
+                        ByteArray(length).apply { System.arraycopy(pcmData, offset, this, 0, length) }
                     }
+                    sendDmsdpBinary(dataSessionId, -19088894, audioPayload)
                 } catch (e: Exception) {
                     Log.e(TAG, "Error transmitting mic audio frame: ${e.message}")
                 }
