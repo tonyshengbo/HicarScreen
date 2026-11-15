@@ -90,6 +90,7 @@ class HiCarServer(
         }
     }
     private val audioPlayer = AacAudioPlayer(context)
+    private val micRecorder = com.hicar.explorer.media.MicRecorder(context)
     private val running = AtomicBoolean(false)
     private val executor: ExecutorService = Executors.newCachedThreadPool()
     private var registrationListener: NsdManager.RegistrationListener? = null
@@ -115,6 +116,7 @@ class HiCarServer(
         callback.onStateChanged(ConnectionState.DISCONNECTED, "服务已停止")
         videoDecoder.stopDecoder()
         audioPlayer.stop()
+        micRecorder.stopRecording()
         unregisterMdns()
         try { serverSocket?.close() } catch (_: IOException) {}
         try { altServerSocket?.close() } catch (_: IOException) {}
@@ -202,6 +204,7 @@ class HiCarServer(
         callback.onTcpStatusChanged(true, "DMSDP Client connected: $clientInfo")
         val inStream = socket.getInputStream()
         val out = socket.getOutputStream()
+        val dmsdpOutLock = Any()
 
         // AES-128-CTR Cipher instances for this session
         var aesEnc: Cipher? = null
@@ -249,6 +252,88 @@ class HiCarServer(
             }
         }
 
+        // Mic frame sequence counter
+        val micSeq = AtomicInteger(0)
+
+        // Setup Virtual Microphone frame transmitter
+        micRecorder.callback = object : com.hicar.explorer.media.MicRecorder.Callback {
+            override fun onAudioFrame(dataSessionId: Int, pcmData: ByteArray, offset: Int, length: Int) {
+                try {
+                    val innerHeaderLen = 18
+                    val payloadLen = innerHeaderLen + length
+                    val binFrame = ByteArray(11 + payloadLen)
+
+                    val seq = micSeq.getAndIncrement()
+                    val timeUs = System.nanoTime() / 1000L
+
+                    // 11-byte DMSDP binary transport header
+                    binFrame[0] = 0x24.toByte() // '$'
+                    // Module (DataSessionID, 4 bytes big-endian)
+                    binFrame[1] = ((dataSessionId shr 24) and 0xFF).toByte()
+                    binFrame[2] = ((dataSessionId shr 16) and 0xFF).toByte()
+                    binFrame[3] = ((dataSessionId shr 8) and 0xFF).toByte()
+                    binFrame[4] = (dataSessionId and 0xFF).toByte()
+
+                    // Type (0xFEDCBA02: VirMic audio stream, 4 bytes big-endian)
+                    binFrame[5] = 0xFE.toByte()
+                    binFrame[6] = 0xDC.toByte()
+                    binFrame[7] = 0xBA.toByte()
+                    binFrame[8] = 0x02.toByte()
+
+                    // Payload length (2 bytes big-endian)
+                    binFrame[9] = ((payloadLen shr 8) and 0xFF).toByte()
+                    binFrame[10] = (payloadLen and 0xFF).toByte()
+
+                    // 18-byte inner header:
+                    // Bytes 0..3: seq (4 bytes big-endian)
+                    binFrame[11] = ((seq shr 24) and 0xFF).toByte()
+                    binFrame[12] = ((seq shr 16) and 0xFF).toByte()
+                    binFrame[13] = ((seq shr 8) and 0xFF).toByte()
+                    binFrame[14] = (seq and 0xFF).toByte()
+                    // Bytes 4..5: pcmLen (2 bytes big-endian)
+                    binFrame[15] = ((length shr 8) and 0xFF).toByte()
+                    binFrame[16] = (length and 0xFF).toByte()
+                    // Bytes 6..13: timeUs (8 bytes big-endian)
+                    for (i in 0..7) {
+                        binFrame[17 + i] = ((timeUs shr (56 - i * 8)) and 0xFF).toByte()
+                    }
+                    // Bytes 14..17: flags / dataType = 0 (4 bytes big-endian)
+                    binFrame[25] = 0
+                    binFrame[26] = 0
+                    binFrame[27] = 0
+                    binFrame[28] = 0
+
+                    // Bytes 18..: raw PCM audio data
+                    System.arraycopy(pcmData, offset, binFrame, 11 + innerHeaderLen, length)
+
+                    val useCrypto = isCryptoActive && btServer.getSessionKey() != null
+                    val magic = if (useCrypto) 0xAB.toByte() else 0x00.toByte()
+                    val body = if (useCrypto) encryptDmsdp(binFrame) else binFrame
+                    val totalLen = body.size
+                    val wirePacket = ByteArray(3 + totalLen)
+                    wirePacket[0] = magic
+                    wirePacket[1] = ((totalLen shr 8) and 0xFF).toByte()
+                    wirePacket[2] = (totalLen and 0xFF).toByte()
+                    System.arraycopy(body, 0, wirePacket, 3, totalLen)
+
+                    synchronized(dmsdpOutLock) {
+                        out.write(wirePacket)
+                        out.flush()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error transmitting mic audio frame: ${e.message}")
+                }
+            }
+
+            override fun onRecordingStateChanged(isRecording: Boolean, reason: String) {
+                Log.i(TAG, "🎙️ Mic state changed: isRecording=$isRecording ($reason)")
+                callback.onStateChanged(
+                    if (isRecording) ConnectionState.PROJECTING else ConnectionState.PROJECTING,
+                    if (isRecording) "语音输入中..." else "投屏中 (1080P 60FPS)"
+                )
+            }
+        }
+
         // Helper to send a framed DMSDP message (magic 0x00 for plaintext, 0xAB for encrypted)
         fun sendDmsdp(payload: String, forcePlain: Boolean = false) {
             val plainBytes = payload.toByteArray(StandardCharsets.UTF_8)
@@ -261,8 +346,10 @@ class HiCarServer(
             frame[1] = ((len shr 8) and 0xFF).toByte()
             frame[2] = (len and 0xFF).toByte()
             System.arraycopy(body, 0, frame, 3, len)
-            out.write(frame)
-            out.flush()
+            synchronized(dmsdpOutLock) {
+                out.write(frame)
+                out.flush()
+            }
             Log.i(TAG, "TX DMSDP frame (magic=0x%02X, len=$len B) to $clientInfo:\n$payload".format(magic))
             callback.onDataReceived(clientInfo, frame)
         }
@@ -292,8 +379,10 @@ class HiCarServer(
             frame[1] = ((len shr 8) and 0xFF).toByte()
             frame[2] = (len and 0xFF).toByte()
             System.arraycopy(body, 0, frame, 3, len)
-            out.write(frame)
-            out.flush()
+            synchronized(dmsdpOutLock) {
+                out.write(frame)
+                out.flush()
+            }
             Log.i(TAG, "TX DMSDP Binary frame (module=$module, type=$type, payloadLen=${payload.size}, totalLen=$len)")
         }
 
@@ -398,7 +487,11 @@ class HiCarServer(
                 put("remoteIp", "192.168.49.2")
                 put("port", 9999)
                 put("businessId", 1)
-                put("properties", org.json.JSONObject())
+                put("properties", org.json.JSONObject().apply {
+                    put("5002", true) // DEVICE_SUPPORTMIC_BOOLEAN
+                    put("5003", true) // DEVICE_SUPPORTSPEAKER_BOOLEAN
+                    put("5004", true) // DEVICE_SUPPORTDISPLAY_BOOLEAN
+                })
             }.toString().toByteArray(StandardCharsets.UTF_8)
             val devPayload = ByteArray(1 + carDevice.size).apply {
                 this[0] = 0xE5.toByte() // cmd 101
@@ -458,7 +551,19 @@ class HiCarServer(
                 put("serviceId", "service_mic_1")
                 put("serviceType", 2)
                 put("status", org.json.JSONObject())
-                put("properties", org.json.JSONObject())
+                put("properties", org.json.JSONObject().apply {
+                    put("2003", org.json.JSONArray().apply {
+                        put(48000)
+                        put(16000)
+                    }) // Sample rates
+                    put("2004", org.json.JSONArray().apply {
+                        put(1) // PCM Codec
+                    })
+                    put("2005", org.json.JSONArray().apply {
+                        put(12) // Stereo (AudioFormat.CHANNEL_IN_STEREO = 12)
+                        put(16) // Mono (AudioFormat.CHANNEL_IN_MONO = 16)
+                    })
+                })
             }.toString().toByteArray(StandardCharsets.UTF_8)
             val micPayload = ByteArray(1 + micJson.size).apply {
                 this[0] = 0xE6.toByte() // cmd 102
@@ -633,21 +738,50 @@ class HiCarServer(
                             }
                         }
 
-                        // Handle msdp_trigger_method (e.g. OPTIONS, SETUP, TEARDOWN)
+                        val serviceId = headers["serviceid"] ?: ""
+                        val serviceType = headers["servicetype"] ?: ""
+
+                        // Handle msdp_trigger_method (e.g. OPTIONS, SETUP, TEARDOWN, CLOSE)
                         val triggerMethod = if (message.contains("msdp_trigger_method:")) {
                             message.substringAfter("msdp_trigger_method:").substringBefore("\r\n").substringBefore("\n").trim()
                         } else headers["msdp_trigger_method"]
 
                         if (triggerMethod != null && triggerMethod.equals("OPTIONS", ignoreCase = true)) {
-                            val serviceId = headers["serviceid"] ?: "service_audio_1"
-                            val serviceType = headers["servicetype"] ?: "3"
+                            val targetServiceId = if (serviceId.isNotEmpty()) serviceId else "service_audio_1"
+                            val targetServiceType = if (serviceType.isNotEmpty()) serviceType else "3"
                             val optCSeq = carCSeq.getAndIncrement()
-                            Log.i(TAG, "Phone triggered DMSDP OPTIONS for $serviceId! Sending OPTIONS request (CSeq $optCSeq)...")
+                            Log.i(TAG, "Phone triggered DMSDP OPTIONS for $targetServiceId! Sending OPTIONS request (CSeq $optCSeq)...")
                             val optReq = "OPTIONS * DMSDP/1.0\r\n" +
-                                    "ServiceID: $serviceId\r\n" +
-                                    "ServiceType: $serviceType\r\n" +
+                                    "ServiceID: $targetServiceId\r\n" +
+                                    "ServiceType: $targetServiceType\r\n" +
                                     "CSeq: $optCSeq\r\n\r\n"
                             sendDmsdp(optReq)
+                        }
+
+                        // Check if mic recording is controlled via SET_PARAMETER
+                        if (serviceId == "service_mic_1" || serviceType == "2") {
+                            if (triggerMethod != null && (triggerMethod.equals("CLOSE", ignoreCase = true) || triggerMethod.equals("TEARDOWN", ignoreCase = true))) {
+                                Log.i(TAG, "🎙️ Phone stopped mic capture via SET_PARAMETER (method=$triggerMethod)")
+                                micRecorder.stopRecording()
+                            } else {
+                                val dataSessionId = headers["datasessionid"]?.toIntOrNull() ?: 100000001
+                                var sampleRate = 48000
+                                var channelNum = 2
+                                val paraAudio = headers["paraaudio"] ?: (if (message.contains("ParaAudio:")) message.substringAfter("ParaAudio:").substringBefore("\r\n").trim() else "")
+                                if (paraAudio.isNotEmpty()) {
+                                    for (part in paraAudio.split(";")) {
+                                        val kv = part.split("=")
+                                        if (kv.size == 2) {
+                                            when (kv[0].trim().lowercase()) {
+                                                "samplerate" -> sampleRate = kv[1].trim().toIntOrNull() ?: sampleRate
+                                                "channelnum" -> channelNum = kv[1].trim().toIntOrNull() ?: channelNum
+                                            }
+                                        }
+                                    }
+                                }
+                                Log.i(TAG, "🎙️ Phone requested mic capture: session=$dataSessionId, rate=$sampleRate Hz, channels=$channelNum")
+                                micRecorder.startRecording(dataSessionId, sampleRate, channelNum)
+                            }
                         }
                     }
                     "SETUP" -> {
@@ -694,7 +828,15 @@ class HiCarServer(
                                 ctxHeaders +
                                 "CSeq: $cseq\r\n\r\n"
                         sendDmsdp(resp)
-                        break
+                        val sId = headers["serviceid"]
+                        val sType = headers["servicetype"]
+                        if (sId == "service_mic_1" || sType == "2") {
+                            Log.i(TAG, "🎙️ TEARDOWN received for mic service. Stopping MicRecorder without closing DMSDP.")
+                            micRecorder.stopRecording()
+                        } else {
+                            Log.i(TAG, "TEARDOWN received for main session ($sId). Closing DMSDP.")
+                            break
+                        }
                     }
                     else -> {
                         if (requestLine.startsWith("DMSDP/")) {

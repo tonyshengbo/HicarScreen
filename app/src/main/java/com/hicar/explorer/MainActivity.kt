@@ -77,6 +77,7 @@ class MainActivity : AppCompatActivity() {
                 Manifest.permission.ACCESS_COARSE_LOCATION,
                 Manifest.permission.ACCESS_WIFI_STATE,
                 Manifest.permission.CHANGE_WIFI_STATE,
+                Manifest.permission.RECORD_AUDIO,
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 perms.add(Manifest.permission.BLUETOOTH_ADVERTISE)
