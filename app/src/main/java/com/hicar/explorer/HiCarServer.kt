@@ -306,51 +306,36 @@ class HiCarServer(
             }
         }
 
-        // Mic frame sequence counter
-        val micSeq = AtomicInteger(0)
-
         // Setup Virtual Microphone frame transmitter
         micRecorder.callback = object : com.hicar.explorer.media.MicRecorder.Callback {
             override fun onAudioFrame(dataSessionId: Int, pcmData: ByteArray, offset: Int, length: Int) {
                 try {
-                    val innerHeaderLen = 18
-                    val innerPayloadLen = innerHeaderLen + length
-                    val binPayload = ByteArray(innerPayloadLen)
+                    // DMSDP Datagram wire format (expected by Session::TCPDatagramReadMore -> DataSession::OnDatagramNotify):
+                    // 6-byte datagram header: dataSessionId (4B BE) + payload length (2B BE)
+                    // followed directly by ADTS AAC audio frame (length bytes)
+                    val datagram = ByteArray(6 + length)
+                    datagram[0] = ((dataSessionId shr 24) and 0xFF).toByte()
+                    datagram[1] = ((dataSessionId shr 16) and 0xFF).toByte()
+                    datagram[2] = ((dataSessionId shr 8) and 0xFF).toByte()
+                    datagram[3] = (dataSessionId and 0xFF).toByte()
+                    datagram[4] = ((length shr 8) and 0xFF).toByte()
+                    datagram[5] = (length and 0xFF).toByte()
+                    System.arraycopy(pcmData, offset, datagram, 6, length)
 
-                    val seq = micSeq.getAndIncrement()
-                    val timeMs = (System.currentTimeMillis() and 0xFFFFFFFFL).toInt()
+                    val useCrypto = isCryptoActive && btServer.getSessionKey() != null
+                    val magic = if (useCrypto) 0xAB.toByte() else 0x00.toByte()
+                    val body = if (useCrypto) encryptDmsdp(datagram) else datagram
+                    val totalLen = body.size
+                    val frame = ByteArray(3 + totalLen)
+                    frame[0] = magic
+                    frame[1] = ((totalLen shr 8) and 0xFF).toByte()
+                    frame[2] = (totalLen and 0xFF).toByte()
+                    System.arraycopy(body, 0, frame, 3, totalLen)
 
-                    // 18-byte inner header (Huawei DMSDP PushCacheDataToService format):
-                    // Byte 0: serviceType = 3 (Audio service)
-                    binPayload[0] = 0x03.toByte()
-                    // Byte 1: usage = 0
-                    binPayload[1] = 0x00.toByte()
-                    // Bytes 2..5: timeMs (4 bytes big-endian)
-                    binPayload[2] = ((timeMs shr 24) and 0xFF).toByte()
-                    binPayload[3] = ((timeMs shr 16) and 0xFF).toByte()
-                    binPayload[4] = ((timeMs shr 8) and 0xFF).toByte()
-                    binPayload[5] = (timeMs and 0xFF).toByte()
-                    // Bytes 6..9: ssrc = 1 (4 bytes big-endian)
-                    binPayload[6] = 0
-                    binPayload[7] = 0
-                    binPayload[8] = 0
-                    binPayload[9] = 1
-                    // Bytes 10..13: seq (4 bytes big-endian)
-                    binPayload[10] = ((seq shr 24) and 0xFF).toByte()
-                    binPayload[11] = ((seq shr 16) and 0xFF).toByte()
-                    binPayload[12] = ((seq shr 8) and 0xFF).toByte()
-                    binPayload[13] = (seq and 0xFF).toByte()
-                    // Bytes 14..17: totalMsgLen (4 bytes big-endian, checked by PushCacheDataToService)
-                    binPayload[14] = ((innerPayloadLen shr 24) and 0xFF).toByte()
-                    binPayload[15] = ((innerPayloadLen shr 16) and 0xFF).toByte()
-                    binPayload[16] = ((innerPayloadLen shr 8) and 0xFF).toByte()
-                    binPayload[17] = (innerPayloadLen and 0xFF).toByte()
-
-                    // Bytes 18..: raw audio frame (AAC with 7-byte ADTS header)
-                    System.arraycopy(pcmData, offset, binPayload, 18, length)
-
-                    // Send via standard DMSDP Binary framing (module = dataSessionId, type = -19088893 / 0xFEDCBA03)
-                    sendDmsdpBinary(dataSessionId, -19088893, binPayload)
+                    synchronized(dmsdpOutLock) {
+                        out.write(frame)
+                        out.flush()
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error transmitting mic audio frame: ${e.message}")
                 }
