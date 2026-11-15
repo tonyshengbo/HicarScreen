@@ -1312,8 +1312,9 @@ class HiCarBtServer(
             callback.onStatus("🎉 HICHAIN AUTH 100% COMPLETE! Sent EXCHANGE_RESPONSE (32771)")
             Log.i(TAG, "🎉🎉🎉 HICHAIN AUTH 100% COMPLETE! Sent EXCHANGE_RESPONSE (32771) to $clientName! 🎉🎉🎉")
 
-        } else if (messageCode == 33) {
-            // Legacy LITE_ISO_REQUEST from Phone!
+        } else if (messageCode == 17 || messageCode == 33) {
+            // LITE_ISO_REQUEST (33) / AUTH_START_REQUEST (17) from Phone!
+            val replyCode = if (messageCode == 17) 32785 else 32801
             val isoSaltHex = payload.optString("isoSalt", "")
             val peerAuthIdHex = payload.optString("peerAuthId", "")
             val seedHex = payload.optString("seed", "")
@@ -1343,7 +1344,7 @@ class HiCarBtServer(
                 put("version", versionObj)
             }
             val respData = JSONObject().apply {
-                put("message", 32801)
+                put("message", replyCode)
                 put("payload", respPayload)
             }
             val outerPacket = JSONObject().apply {
@@ -1356,11 +1357,12 @@ class HiCarBtServer(
 
             out.write(outerPacket)
             out.flush()
-            callback.onStatus("TX -> $clientName (DeviceAuth Msg 32801 ServerResponse)")
-            Log.i(TAG, "Sent LITE_ISO_RESPONSE (32801) to $clientName")
+            callback.onStatus("TX -> $clientName (DeviceAuth Msg $replyCode ServerResponse)")
+            Log.i(TAG, "Sent ISO RESPONSE ($replyCode) to $clientName")
 
-        } else if (messageCode == 34) {
-            // Legacy LITE_ISO_CLIENT_MAC from Phone!
+        } else if (messageCode == 18 || messageCode == 34) {
+            // LITE_ISO_CLIENT_MAC (34) / AUTH_ACK_REQUEST (18) from Phone!
+            val replyCode = if (messageCode == 18) 32786 else 32802
             val clientTokenHex = payload.optString("token", "")
             val clientToken = fromHex(clientTokenHex)
             val currentPsk = psk ?: return
@@ -1372,12 +1374,20 @@ class HiCarBtServer(
             callback.onStatus("DeviceAuth Token Match: $isMatch")
 
             if (isMatch) {
+                val isoSessionKey = hkdfExtractExpand(currentPsk, concatAll(peerRandom!!, selfRandom!!), "hichain_iso_session_key".toByteArray(StandardCharsets.UTF_8), 32)
+                sessionKey = isoSessionKey
+                val sKey16 = isoSessionKey.copyOfRange(0, 16)
+                pakeSessionKey = sKey16
+                val dmsdpKey = hkdfExtractExpand(peerRandom!!, sKey16, "hichain_return_key".toByteArray(StandardCharsets.UTF_8), 16)
+                dmsdpSessionKey = dmsdpKey
+                Log.i(TAG, "ISO DMSDP session key derived (16B): ${toHex(dmsdpKey)}")
+
                 val returnCodeMac = hmacSha256(currentPsk, byteArrayOf(0, 0, 0, 0))
                 val respPayload = JSONObject().apply {
                     put("returnCodeMac", toHex(returnCodeMac))
                 }
                 val respData = JSONObject().apply {
-                    put("message", 32802)
+                    put("message", replyCode)
                     put("payload", respPayload)
                 }
                 val outerPacket = JSONObject().apply {
@@ -1391,7 +1401,7 @@ class HiCarBtServer(
                 out.write(outerPacket)
                 out.flush()
                 callback.onStatus("🎉 PIN 123456 AUTHENTICATION SUCCESSFUL! Session established.")
-                Log.i(TAG, "Sent LITE_ISO_SERVER_DERIVE (32802). AUTHENTICATION COMPLETE!")
+                Log.i(TAG, "Sent ISO SERVER DERIVE ($replyCode). AUTHENTICATION COMPLETE!")
             }
         }
     }

@@ -252,81 +252,6 @@ class HiCarServer(
             }
         }
 
-        // Mic frame sequence counter
-        val micSeq = AtomicInteger(0)
-
-        // Setup Virtual Microphone frame transmitter
-        micRecorder.callback = object : com.hicar.explorer.media.MicRecorder.Callback {
-            override fun onAudioFrame(dataSessionId: Int, pcmData: ByteArray, offset: Int, length: Int) {
-                try {
-                    val innerHeaderLen = 18
-                    val payloadLen = innerHeaderLen + length
-                    val binFrame = ByteArray(6 + payloadLen)
-
-                    val seq = micSeq.getAndIncrement()
-                    val timeUs = System.nanoTime() / 1000L
-
-                    // DMSDP Audio Datagram Transport Header (6 bytes):
-                    // Bytes 0..3: DataSessionID (4 bytes big-endian, read as module by phone's OnDatagramNotify)
-                    binFrame[0] = ((dataSessionId shr 24) and 0xFF).toByte()
-                    binFrame[1] = ((dataSessionId shr 16) and 0xFF).toByte()
-                    binFrame[2] = ((dataSessionId shr 8) and 0xFF).toByte()
-                    binFrame[3] = (dataSessionId and 0xFF).toByte()
-
-                    // Bytes 4..5: Payload length (18 + length, 2 bytes big-endian)
-                    binFrame[4] = ((payloadLen shr 8) and 0xFF).toByte()
-                    binFrame[5] = (payloadLen and 0xFF).toByte()
-
-                    // 18-byte inner header:
-                    // Bytes 6..9: seq (4 bytes big-endian)
-                    binFrame[6] = ((seq shr 24) and 0xFF).toByte()
-                    binFrame[7] = ((seq shr 16) and 0xFF).toByte()
-                    binFrame[8] = ((seq shr 8) and 0xFF).toByte()
-                    binFrame[9] = (seq and 0xFF).toByte()
-                    // Bytes 10..11: pcmLen (2 bytes big-endian)
-                    binFrame[10] = ((length shr 8) and 0xFF).toByte()
-                    binFrame[11] = (length and 0xFF).toByte()
-                    // Bytes 12..19: timeUs (8 bytes big-endian)
-                    for (i in 0..7) {
-                        binFrame[12 + i] = ((timeUs shr (56 - i * 8)) and 0xFF).toByte()
-                    }
-                    // Bytes 20..23: flags / dataType = 0 (4 bytes big-endian)
-                    binFrame[20] = 0
-                    binFrame[21] = 0
-                    binFrame[22] = 0
-                    binFrame[23] = 0
-
-                    // Bytes 24..: raw PCM audio data
-                    System.arraycopy(pcmData, offset, binFrame, 24, length)
-
-                    val useCrypto = isCryptoActive && btServer.getSessionKey() != null
-                    val magic = if (useCrypto) 0xAB.toByte() else 0x00.toByte()
-                    val body = if (useCrypto) encryptDmsdp(binFrame) else binFrame
-                    val totalLen = body.size
-                    val wirePacket = ByteArray(3 + totalLen)
-                    wirePacket[0] = magic
-                    wirePacket[1] = ((totalLen shr 8) and 0xFF).toByte()
-                    wirePacket[2] = (totalLen and 0xFF).toByte()
-                    System.arraycopy(body, 0, wirePacket, 3, totalLen)
-
-                    synchronized(dmsdpOutLock) {
-                        out.write(wirePacket)
-                        out.flush()
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error transmitting mic audio frame: ${e.message}")
-                }
-            }
-
-            override fun onRecordingStateChanged(isRecording: Boolean, reason: String) {
-                Log.i(TAG, "🎙️ Mic state changed: isRecording=$isRecording ($reason)")
-                callback.onStateChanged(
-                    if (isRecording) ConnectionState.PROJECTING else ConnectionState.PROJECTING,
-                    if (isRecording) "语音输入中..." else "投屏中 (1080P 60FPS)"
-                )
-            }
-        }
-
         // Helper to send a framed DMSDP message (magic 0x00 for plaintext, 0xAB for encrypted)
         fun sendDmsdp(payload: String, forcePlain: Boolean = false) {
             val plainBytes = payload.toByteArray(StandardCharsets.UTF_8)
@@ -376,7 +301,68 @@ class HiCarServer(
                 out.write(frame)
                 out.flush()
             }
-            Log.i(TAG, "TX DMSDP Binary frame (module=$module, type=$type, payloadLen=${payload.size}, totalLen=$len)")
+            if (type != -19088893) {
+                Log.i(TAG, "TX DMSDP Binary frame (module=$module, type=$type, payloadLen=${payload.size}, totalLen=$len)")
+            }
+        }
+
+        // Mic frame sequence counter
+        val micSeq = AtomicInteger(0)
+
+        // Setup Virtual Microphone frame transmitter
+        micRecorder.callback = object : com.hicar.explorer.media.MicRecorder.Callback {
+            override fun onAudioFrame(dataSessionId: Int, pcmData: ByteArray, offset: Int, length: Int) {
+                try {
+                    val innerHeaderLen = 18
+                    val innerPayloadLen = innerHeaderLen + length
+                    val binPayload = ByteArray(innerPayloadLen)
+
+                    val seq = micSeq.getAndIncrement()
+                    val timeMs = (System.currentTimeMillis() and 0xFFFFFFFFL).toInt()
+
+                    // 18-byte inner header (Huawei DMSDP PushCacheDataToService format):
+                    // Byte 0: serviceType = 3 (Audio service)
+                    binPayload[0] = 0x03.toByte()
+                    // Byte 1: usage = 0
+                    binPayload[1] = 0x00.toByte()
+                    // Bytes 2..5: timeMs (4 bytes big-endian)
+                    binPayload[2] = ((timeMs shr 24) and 0xFF).toByte()
+                    binPayload[3] = ((timeMs shr 16) and 0xFF).toByte()
+                    binPayload[4] = ((timeMs shr 8) and 0xFF).toByte()
+                    binPayload[5] = (timeMs and 0xFF).toByte()
+                    // Bytes 6..9: ssrc = 1 (4 bytes big-endian)
+                    binPayload[6] = 0
+                    binPayload[7] = 0
+                    binPayload[8] = 0
+                    binPayload[9] = 1
+                    // Bytes 10..13: seq (4 bytes big-endian)
+                    binPayload[10] = ((seq shr 24) and 0xFF).toByte()
+                    binPayload[11] = ((seq shr 16) and 0xFF).toByte()
+                    binPayload[12] = ((seq shr 8) and 0xFF).toByte()
+                    binPayload[13] = (seq and 0xFF).toByte()
+                    // Bytes 14..17: totalMsgLen (4 bytes big-endian, checked by PushCacheDataToService)
+                    binPayload[14] = ((innerPayloadLen shr 24) and 0xFF).toByte()
+                    binPayload[15] = ((innerPayloadLen shr 16) and 0xFF).toByte()
+                    binPayload[16] = ((innerPayloadLen shr 8) and 0xFF).toByte()
+                    binPayload[17] = (innerPayloadLen and 0xFF).toByte()
+
+                    // Bytes 18..: raw audio frame (AAC with 7-byte ADTS header)
+                    System.arraycopy(pcmData, offset, binPayload, 18, length)
+
+                    // Send via standard DMSDP Binary framing (module = dataSessionId, type = -19088893 / 0xFEDCBA03)
+                    sendDmsdpBinary(dataSessionId, -19088893, binPayload)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error transmitting mic audio frame: ${e.message}")
+                }
+            }
+
+            override fun onRecordingStateChanged(isRecording: Boolean, reason: String) {
+                Log.i(TAG, "🎙️ Mic state changed: isRecording=$isRecording ($reason)")
+                callback.onStateChanged(
+                    if (isRecording) ConnectionState.PROJECTING else ConnectionState.PROJECTING,
+                    if (isRecording) "语音输入中..." else "投屏中 (1080P 60FPS)"
+                )
+            }
         }
 
         // Helper to read a raw framed DMSDP payload
@@ -546,15 +532,16 @@ class HiCarServer(
                 put("status", org.json.JSONObject())
                 put("properties", org.json.JSONObject().apply {
                     put("2003", org.json.JSONArray().apply {
-                        put(16000)
                         put(48000)
-                    }) // Sample rates (prefer 16kHz for speech recognition / Celia)
+                        put(16000)
+                    }) // Sample rates
                     put("2004", org.json.JSONArray().apply {
-                        put(1) // PCM Codec
+                        put(0) // Codec 0: AAC-LC (Huawei HiCar standard)
+                        put(1) // Codec 1: PCM
                     })
                     put("2005", org.json.JSONArray().apply {
-                        put(16) // Mono (AudioFormat.CHANNEL_IN_MONO = 16)
                         put(12) // Stereo (AudioFormat.CHANNEL_IN_STEREO = 12)
+                        put(16) // Mono (AudioFormat.CHANNEL_IN_MONO = 16)
                     })
                 })
             }.toString().toByteArray(StandardCharsets.UTF_8)
@@ -758,8 +745,9 @@ class HiCarServer(
                                 micRecorder.stopRecording()
                             } else {
                                 val dataSessionId = headers["datasessionid"]?.toIntOrNull() ?: 100000001
-                                var sampleRate = 16000
-                                var channelNum = 1
+                                var sampleRate = 48000
+                                var channelNum = 2
+                                var codec = 0 // 0 = AAC-LC (HiCar default), 1 = PCM
                                 val paraAudio = headers["paraaudio"] ?: (if (message.contains("ParaAudio:")) message.substringAfter("ParaAudio:").substringBefore("\r\n").trim() else "")
                                 if (paraAudio.isNotEmpty()) {
                                     for (part in paraAudio.split(";")) {
@@ -768,12 +756,13 @@ class HiCarServer(
                                             when (kv[0].trim().lowercase()) {
                                                 "samplerate" -> sampleRate = kv[1].trim().toIntOrNull() ?: sampleRate
                                                 "channelnum" -> channelNum = kv[1].trim().toIntOrNull() ?: channelNum
+                                                "codec" -> codec = kv[1].trim().toIntOrNull() ?: codec
                                             }
                                         }
                                     }
                                 }
-                                Log.i(TAG, "🎙️ Phone requested mic capture: session=$dataSessionId, rate=$sampleRate Hz, channels=$channelNum")
-                                micRecorder.startRecording(dataSessionId, sampleRate, channelNum)
+                                Log.i(TAG, "🎙️ Phone requested mic capture: session=$dataSessionId, rate=$sampleRate Hz, channels=$channelNum, codec=$codec")
+                                micRecorder.startRecording(dataSessionId, sampleRate, channelNum, codec)
                             }
                         }
                     }
