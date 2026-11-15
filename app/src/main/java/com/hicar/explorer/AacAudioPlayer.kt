@@ -1,5 +1,6 @@
 package com.hicar.explorer
 
+import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -8,14 +9,31 @@ import android.media.MediaCodec
 import android.media.MediaFormat
 import android.os.Build
 import android.util.Log
+import com.hicar.explorer.media.AudioFocusManager
 import java.nio.ByteBuffer
 
-class AacAudioPlayer {
+class AacAudioPlayer(context: Context? = null) {
 
     companion object {
         private const val TAG = "AacAudioPlayer"
         private const val SAMPLE_RATE = 48000
         private const val CHANNELS = 2
+    }
+
+    private val audioFocusManager: AudioFocusManager? = context?.let {
+        AudioFocusManager(it, object : AudioFocusManager.FocusListener {
+            override fun onGainFocus() {
+                setVolume(1.0f)
+            }
+
+            override fun onLossFocus(isTransient: Boolean, canDuck: Boolean) {
+                if (canDuck) {
+                    setVolume(0.2f)
+                } else {
+                    setVolume(0.0f)
+                }
+            }
+        })
     }
 
     private var audioTrack: AudioTrack? = null
@@ -26,6 +44,18 @@ class AacAudioPlayer {
 
     private var frameCount = 0L
     private var byteCount = 0L
+
+    private fun setVolume(vol: Float) {
+        val track = audioTrack ?: return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                track.setVolume(vol)
+            } else {
+                @Suppress("DEPRECATION")
+                track.setStereoVolume(vol, vol)
+            }
+        } catch (_: Exception) {}
+    }
 
     @Synchronized
     fun start() {
@@ -67,6 +97,7 @@ class AacAudioPlayer {
                 )
             }
 
+            audioFocusManager?.requestFocus()
             audioTrack?.play()
 
             // 2. Initialize MediaCodec for AAC decoding with ADTS support
@@ -97,6 +128,7 @@ class AacAudioPlayer {
     @Synchronized
     fun stop() {
         isPlaying = false
+        audioFocusManager?.abandonFocus()
         try {
             drainThread?.interrupt()
             drainThread = null

@@ -1,58 +1,74 @@
 package com.hicar.explorer
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
+import android.view.WindowManager
 import android.widget.Button
+import android.widget.RelativeLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
-    // UI
-    private lateinit var tvBleStatus: TextView
-    private lateinit var tvBleDetail: TextView
-    private lateinit var btnBleToggle: Button
-    private lateinit var tvWifiStatus: TextView
-    private lateinit var tvWifiDetail: TextView
-    private lateinit var btnWifiDiscover: Button
-    private lateinit var tvMdnsStatus: TextView
-    private lateinit var tvMdnsDetail: TextView
-    private lateinit var tvTcpStatus: TextView
-    private lateinit var tvTcpDetail: TextView
-    private lateinit var tvLog: TextView
-    private lateinit var scrollLog: ScrollView
+    companion object {
+        private const val TAG = "HiCarReceiver"
+        private const val PERM_REQUEST_CODE = 100
+    }
+
+    // UI - Main Automotive Layers
+    private lateinit var surfaceView: SurfaceView
+    private lateinit var layoutStandby: RelativeLayout
+    private lateinit var tvStatusBadge: TextView
+    private lateinit var tvHeadline: TextView
+    private lateinit var tvInstructions: TextView
+    private lateinit var tvStatusDetail: TextView
+    private lateinit var tvDeviceName: TextView
+
+    // Footer Indicators
+    private lateinit var tvFooterBle: TextView
+    private lateinit var tvFooterWifi: TextView
+    private lateinit var tvFooterAudio: TextView
+
+    // Debug Diagnostics Overlay
+    private lateinit var layoutDebugOverlay: RelativeLayout
+    private lateinit var btnToggleDebug: TextView
+    private lateinit var btnCloseDebug: Button
     private lateinit var btnCopyLog: Button
     private lateinit var btnClearLog: Button
-    private lateinit var btnStartAll: Button
-    private lateinit var btnClickAgree: Button
+    private lateinit var tvLog: TextView
+    private lateinit var scrollLog: ScrollView
 
-    // Managers
+    // Protocol Managers
     private lateinit var bleAdvertiser: BleAdvertiser
     private lateinit var hiCarServer: HiCarServer
     private lateinit var hiCarBtServer: HiCarBtServer
     private lateinit var wifiDirectManager: WifiDirectManager
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var isAdvertising = false
-
-    companion object {
-        private const val PERM_REQUEST_CODE = 100
-    }
+    private val timeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+    private var isProjecting = false
 
     private val requiredPermissions: Array<String>
         get() {
@@ -75,7 +91,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_main)
 
         initViews()
@@ -84,9 +100,52 @@ class MainActivity : AppCompatActivity() {
         checkAndRequestPermissions()
     }
 
-    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun initViews() {
+        surfaceView = findViewById(R.id.surface_view)
+        layoutStandby = findViewById(R.id.layout_standby)
+        tvStatusBadge = findViewById(R.id.tv_status_badge)
+        tvHeadline = findViewById(R.id.tv_headline)
+        tvInstructions = findViewById(R.id.tv_instructions)
+        tvStatusDetail = findViewById(R.id.tv_status_detail)
+        tvDeviceName = findViewById(R.id.tv_device_name)
+
+        tvFooterBle = findViewById(R.id.tv_footer_ble)
+        tvFooterWifi = findViewById(R.id.tv_footer_wifi)
+        tvFooterAudio = findViewById(R.id.tv_footer_audio)
+
+        layoutDebugOverlay = findViewById(R.id.layout_debug_overlay)
+        btnToggleDebug = findViewById(R.id.btn_toggle_debug)
+        btnCloseDebug = findViewById(R.id.btn_close_debug)
+        btnCopyLog = findViewById(R.id.btn_copy_log)
+        btnClearLog = findViewById(R.id.btn_clear_log)
+        tvLog = findViewById(R.id.tv_log)
+        scrollLog = findViewById(R.id.scroll_log)
+
+        // Debug toggle listeners
+        btnToggleDebug.setOnClickListener {
+            val isVisible = layoutDebugOverlay.visibility == View.VISIBLE
+            layoutDebugOverlay.visibility = if (isVisible) View.GONE else View.VISIBLE
+        }
+        btnCloseDebug.setOnClickListener {
+            layoutDebugOverlay.visibility = View.GONE
+        }
+        btnCopyLog.setOnClickListener {
+            val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("HiCar Log", tvLog.text.toString()))
+            Toast.makeText(this, "日志已复制到剪贴板", Toast.LENGTH_SHORT).show()
+        }
+        btnClearLog.setOnClickListener {
+            tvLog.text = ""
+        }
+
+        // Display current Bluetooth device name
+        val bm = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        val btName = bm?.adapter?.name ?: "HiCar"
+        tvDeviceName.text = "车载设备: $btName (蓝牙可见)"
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
     private fun initSurfaceView() {
-        val surfaceView = findViewById<SurfaceView>(R.id.surface_view)
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 appendLog("[SURFACE] Surface created, binding to video decoder")
@@ -104,7 +163,7 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        // Capture touch events directly on the SurfaceView and forward to HiCar virtual display
+        // Capture multi-touch events directly on SurfaceView and forward via UIBC
         surfaceView.setOnTouchListener { v, event ->
             v.parent?.requestDisallowInterceptTouchEvent(true)
             val w = v.width.toFloat()
@@ -127,12 +186,10 @@ class MainActivity : AppCompatActivity() {
                 MotionEvent.ACTION_DOWN -> {
                     val pointers = getPointers()
                     hiCarServer.sendTouchEvents(0, pointers)
-                    appendLog("👆 Touch DOWN: (${pointers[0].x}, ${pointers[0].y})")
                 }
                 MotionEvent.ACTION_POINTER_DOWN -> {
                     val pointers = getPointers()
                     hiCarServer.sendTouchEvents(0, pointers)
-                    appendLog("✌️ Multi-touch DOWN: ${pointers.size} fingers")
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val pointers = getPointers()
@@ -144,51 +201,13 @@ class MainActivity : AppCompatActivity() {
                     if (remaining.isNotEmpty()) {
                         hiCarServer.sendTouchEvents(2, remaining)
                     }
-                    appendLog("✌️ Multi-touch UP: remaining ${remaining.size} fingers")
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     val pointers = getPointers()
                     hiCarServer.sendTouchEvents(1, pointers)
-                    if (pointers.isNotEmpty()) {
-                        appendLog("👆 Touch UP: (${pointers[0].x}, ${pointers[0].y})")
-                    }
                 }
             }
             true
-        }
-    }
-
-    private fun initViews() {
-        tvBleStatus = findViewById(R.id.tv_ble_status)
-        tvBleDetail = findViewById(R.id.tv_ble_detail)
-        btnBleToggle = findViewById(R.id.btn_ble_toggle)
-        tvWifiStatus = findViewById(R.id.tv_wifi_status)
-        tvWifiDetail = findViewById(R.id.tv_wifi_detail)
-        btnWifiDiscover = findViewById(R.id.btn_wifi_discover)
-        tvMdnsStatus = findViewById(R.id.tv_mdns_status)
-        tvMdnsDetail = findViewById(R.id.tv_mdns_detail)
-        tvTcpStatus = findViewById(R.id.tv_tcp_status)
-        tvTcpDetail = findViewById(R.id.tv_tcp_detail)
-        tvLog = findViewById(R.id.tv_log)
-        scrollLog = findViewById(R.id.scroll_log)
-        btnCopyLog = findViewById(R.id.btn_copy_log)
-        btnClearLog = findViewById(R.id.btn_clear_log)
-        btnStartAll = findViewById(R.id.btn_start_all)
-        btnClickAgree = findViewById(R.id.btn_click_agree)
-
-        btnBleToggle.setOnClickListener { toggleBle() }
-        btnWifiDiscover.setOnClickListener { startWifiDirect() }
-        btnCopyLog.setOnClickListener { copyLog() }
-        btnClearLog.setOnClickListener { clearLog() }
-        btnStartAll.setOnClickListener { startAllServices() }
-        btnClickAgree.setOnClickListener {
-            appendLog("👆 Auto-agreeing: checking box at (150, 928) then confirming at (643, 1012)...")
-            // Step 1: Click the checkbox "我已阅读并同意本声明"
-            hiCarServer.sendClick(150, 928)
-            // Step 2: Click "确认" button
-            window.decorView.postDelayed({
-                hiCarServer.sendClick(643, 1012)
-            }, 300)
         }
     }
 
@@ -196,13 +215,8 @@ class MainActivity : AppCompatActivity() {
         bleAdvertiser = BleAdvertiser(this, object : BleAdvertiser.Callback {
             override fun onStatusChanged(advertising: Boolean, detail: String) {
                 mainHandler.post {
-                    isAdvertising = advertising
-                    tvBleStatus.text = if (advertising) "ON" else "OFF"
-                    tvBleStatus.setTextColor(
-                        if (advertising) 0xFF03DAC5.toInt() else 0xFFCF6679.toInt()
-                    )
-                    tvBleDetail.text = detail
-                    btnBleToggle.text = if (advertising) "Stop BLE Advertising" else "Start BLE Advertising"
+                    tvFooterBle.text = if (advertising) "BLE 广播: 开启" else "BLE 广播: 未开启"
+                    tvFooterBle.setTextColor(if (advertising) 0xFF30D158.toInt() else 0xFF8A94A6.toInt())
                     appendLog("[BLE] $detail")
                 }
             }
@@ -217,38 +231,33 @@ class MainActivity : AppCompatActivity() {
 
             override fun onRfcommData(source: String, data: ByteArray) {
                 mainHandler.post {
-                    appendLog("[RX from $source] ${data.size} bytes\n${formatHexDump(data)}")
+                    appendLog("[RX from $source] ${data.size} bytes")
                 }
             }
         })
 
         hiCarServer = HiCarServer(this, hiCarBtServer, object : HiCarServer.Callback {
+            override fun onStateChanged(state: HiCarServer.ConnectionState, detail: String) {
+                mainHandler.post {
+                    updateConnectionState(state, detail)
+                }
+            }
+
             override fun onMdnsStatusChanged(registered: Boolean, detail: String) {
                 mainHandler.post {
-                    tvMdnsStatus.text = if (registered) "Registered" else "Inactive"
-                    tvMdnsStatus.setTextColor(
-                        if (registered) 0xFF03DAC5.toInt() else 0xFF888888.toInt()
-                    )
-                    tvMdnsDetail.text = detail
                     appendLog("[mDNS] $detail")
                 }
             }
 
             override fun onTcpStatusChanged(running: Boolean, detail: String) {
                 mainHandler.post {
-                    tvTcpStatus.text = if (running) "Listening" else "Stopped"
-                    tvTcpStatus.setTextColor(
-                        if (running) 0xFF03DAC5.toInt() else 0xFF888888.toInt()
-                    )
-                    tvTcpDetail.text = detail
                     appendLog("[TCP] $detail")
                 }
             }
 
             override fun onDataReceived(clientInfo: String, data: ByteArray) {
                 mainHandler.post {
-                    val hex = formatHexDump(data)
-                    appendLog("[RX from $clientInfo]\n$hex")
+                    appendLog("[RX from $clientInfo] ${data.size} bytes")
                 }
             }
         })
@@ -256,35 +265,96 @@ class MainActivity : AppCompatActivity() {
         wifiDirectManager = WifiDirectManager(this, object : WifiDirectManager.Callback {
             override fun onStatusChanged(status: String) {
                 mainHandler.post {
-                    tvWifiStatus.text = status
                     val isConnected = status.contains("Connected", ignoreCase = true)
-                    tvWifiStatus.setTextColor(
-                        if (isConnected) 0xFF03DAC5.toInt() else 0xFF888888.toInt()
-                    )
+                    tvFooterWifi.text = if (isConnected) "Wi-Fi 直连: 已连接" else "Wi-Fi P2P-GO: 就绪"
+                    tvFooterWifi.setTextColor(if (isConnected) 0xFF0A84FF.toInt() else 0xFF30D158.toInt())
                     appendLog("[WiFi-P2P] $status")
                 }
             }
 
             override fun onDetailChanged(detail: String) {
                 mainHandler.post {
-                    tvWifiDetail.text = detail
+                    appendLog("[WiFi-Detail] $detail")
                 }
             }
         })
     }
 
-    private fun toggleBle() {
-        if (!isAdvertising) {
-            bleAdvertiser.startAdvertising()
-        } else {
-            bleAdvertiser.stopAdvertising()
+    private fun updateConnectionState(state: HiCarServer.ConnectionState, detail: String) {
+        when (state) {
+            HiCarServer.ConnectionState.IDLE -> {
+                isProjecting = false
+                exitImmersiveMode()
+                layoutStandby.visibility = View.VISIBLE
+                layoutStandby.animate().alpha(1f).setDuration(250).start()
+                tvStatusBadge.text = "● 等待华为手机连接"
+                tvStatusBadge.setTextColor(0xFF30D158.toInt())
+                tvHeadline.text = "请在手机上发起连接"
+                tvStatusDetail.text = detail
+                appendLog("[STATE] IDLE - $detail")
+            }
+            HiCarServer.ConnectionState.CONNECTING -> {
+                tvStatusBadge.text = "● 正在建立连接"
+                tvStatusBadge.setTextColor(0xFFFF9F0A.toInt())
+                tvHeadline.text = "手机已接入，正在安全握手..."
+                tvStatusDetail.text = detail
+                appendLog("[STATE] CONNECTING - $detail")
+            }
+            HiCarServer.ConnectionState.CONNECTED -> {
+                tvStatusBadge.text = "● 认证成功"
+                tvStatusBadge.setTextColor(0xFF0A84FF.toInt())
+                tvHeadline.text = "握手完成，正在开启投屏通道..."
+                tvStatusDetail.text = detail
+                appendLog("[STATE] CONNECTED - $detail")
+            }
+            HiCarServer.ConnectionState.PROJECTING -> {
+                if (!isProjecting) {
+                    isProjecting = true
+                    enterImmersiveMode()
+                    layoutStandby.animate()
+                        .alpha(0f)
+                        .setDuration(350)
+                        .withEndAction { layoutStandby.visibility = View.GONE }
+                        .start()
+                    appendLog("🎉 [STATE] PROJECTING - Fully active and rendering!")
+                }
+            }
+            HiCarServer.ConnectionState.DISCONNECTED -> {
+                isProjecting = false
+                exitImmersiveMode()
+                layoutStandby.visibility = View.VISIBLE
+                layoutStandby.animate().alpha(1f).setDuration(250).start()
+                tvStatusBadge.text = "● 连接已断开"
+                tvStatusBadge.setTextColor(0xFFFF9F0A.toInt())
+                tvHeadline.text = "连接已结束，正在等待重新回连..."
+                tvStatusDetail.text = detail
+                appendLog("[STATE] DISCONNECTED - $detail")
+            }
         }
     }
 
-    private fun startWifiDirect() {
-        wifiDirectManager.startDiscovery()
-        btnWifiDiscover.text = "P2P Active"
-        btnWifiDiscover.isEnabled = false
+    private fun enterImmersiveMode() {
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = (
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+            or View.SYSTEM_UI_FLAG_FULLSCREEN
+            or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        )
+    }
+
+    private fun exitImmersiveMode() {
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && isProjecting) {
+            enterImmersiveMode()
+        }
     }
 
     private fun startAllServices() {
@@ -304,54 +374,14 @@ class MainActivity : AppCompatActivity() {
         bleAdvertiser.startAdvertising()
         hiCarBtServer.start()
         hiCarServer.start()
-        // wifiDirectManager.startDiscovery() // P2P Group Owner is managed by HiCarBtServer
-        btnStartAll.text = "✓ All Services Running"
-        btnStartAll.isEnabled = false
-        appendLog("[SYSTEM] All services started (BLE + GATT + RFCOMM + mDNS + TCP)")
-    }
-
-    private fun copyLog() {
-        val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        val clip = android.content.ClipData.newPlainText("HiCar Log", tvLog.text.toString())
-        cm.setPrimaryClip(clip)
-        Toast.makeText(this, "Log copied to clipboard", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun clearLog() {
-        tvLog.text = "[Log cleared]\n"
+        appendLog("[SYSTEM] Autonomous wireless receiver engine online")
     }
 
     private fun appendLog(text: String) {
-        val ts = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
-            .format(java.util.Date())
+        val ts = timeFormat.format(Date())
+        Log.i(TAG, "[$ts] $text")
         tvLog.append("[$ts] $text\n")
         scrollLog.post { scrollLog.fullScroll(View.FOCUS_DOWN) }
-    }
-
-    private fun formatHexDump(data: ByteArray): String {
-        if (data.isEmpty()) return "(empty)"
-        val sb = StringBuilder()
-        var offset = 0
-        while (offset < data.size) {
-            val lineLen = minOf(16, data.size - offset)
-            sb.append(String.format("%04X  ", offset))
-            for (i in 0 until 16) {
-                if (i < lineLen) {
-                    sb.append(String.format("%02X ", data[offset + i]))
-                } else {
-                    sb.append("   ")
-                }
-                if (i == 7) sb.append(" ")
-            }
-            sb.append(" |")
-            for (i in 0 until lineLen) {
-                val b = data[offset + i].toInt() and 0xFF
-                sb.append(if (b in 32..126) b.toChar() else '.')
-            }
-            sb.append("|\n")
-            offset += lineLen
-        }
-        return sb.toString()
     }
 
     private fun checkAndRequestPermissions() {
@@ -385,7 +415,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onPermissionsGranted() {
-        appendLog("[SYSTEM] Permissions OK – starting services automatically")
+        appendLog("[SYSTEM] Permissions OK – starting services")
         startAllServices()
     }
 

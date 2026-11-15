@@ -1,367 +1,261 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#121212">
+    android:background="@color/car_bg">
 
-    <LinearLayout
+    <!-- Layer 0: Fullscreen Video Projection SurfaceView -->
+    <SurfaceView
+        android:id="@+id/surface_view"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="12dp">
+        android:layout_height="match_parent" />
 
-        <!-- Title -->
-        <TextView
+    <!-- Layer 1: Automotive Standby / Connection Waiting Screen -->
+    <RelativeLayout
+        android:id="@+id/layout_standby"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/car_bg"
+        android:fitsSystemWindows="true"
+        android:padding="24dp">
+
+        <!-- Header -->
+        <LinearLayout
+            android:id="@+id/header_bar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="HiCar Protocol Explorer"
-            android:textColor="#BB86FC"
-            android:textSize="20sp"
-            android:textStyle="bold"
-            android:gravity="center"
-            android:paddingBottom="12dp"/>
-
-        <!-- BLE Card -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="8dp"
-            app:cardBackgroundColor="#1E1E2E"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="4dp">
+            android:layout_alignParentTop="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
             <LinearLayout
-                android:layout_width="match_parent"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="12dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="📡 BLE Advertiser"
-                        android:textColor="#FFFFFF"
-                        android:textSize="15sp"
-                        android:textStyle="bold"/>
-
-                    <TextView
-                        android:id="@+id/tv_ble_status"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="OFF"
-                        android:textColor="#CF6679"
-                        android:textSize="13sp"
-                        android:textStyle="bold"/>
-                </LinearLayout>
-
-                <TextView
-                    android:id="@+id/tv_ble_detail"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="UUID: FE35 (Huawei HiCar)"
-                    android:textColor="#888888"
-                    android:textSize="11sp"
-                    android:paddingTop="4dp"/>
-
-                <Button
-                    android:id="@+id/btn_ble_toggle"
-                    android:layout_width="match_parent"
-                    android:layout_height="36dp"
-                    android:layout_marginTop="8dp"
-                    android:text="Start BLE Advertising"
-                    android:textSize="13sp"
-                    android:backgroundTint="#6200EA"/>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- Wi-Fi Direct Card -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="8dp"
-            app:cardBackgroundColor="#1E1E2E"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="4dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="12dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="📶 Wi-Fi Direct"
-                        android:textColor="#FFFFFF"
-                        android:textSize="15sp"
-                        android:textStyle="bold"/>
-
-                    <TextView
-                        android:id="@+id/tv_wifi_status"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Idle"
-                        android:textColor="#888888"
-                        android:textSize="13sp"/>
-                </LinearLayout>
-
-                <TextView
-                    android:id="@+id/tv_wifi_detail"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Listening for P2P connections..."
-                    android:textColor="#888888"
-                    android:textSize="11sp"
-                    android:paddingTop="4dp"/>
-
-                <Button
-                    android:id="@+id/btn_wifi_discover"
-                    android:layout_width="match_parent"
-                    android:layout_height="36dp"
-                    android:layout_marginTop="8dp"
-                    android:text="Start P2P Discovery"
-                    android:textSize="13sp"
-                    android:backgroundTint="#018786"/>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- mDNS Card -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="8dp"
-            app:cardBackgroundColor="#1E1E2E"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="4dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:padding="12dp">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="🔍 mDNS (_hicar._tcp)"
-                        android:textColor="#FFFFFF"
-                        android:textSize="15sp"
-                        android:textStyle="bold"/>
-
-                    <TextView
-                        android:id="@+id/tv_mdns_detail"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Port 8899 | Not registered"
-                        android:textColor="#888888"
-                        android:textSize="11sp"
-                        android:paddingTop="4dp"/>
-                </LinearLayout>
-
-                <TextView
-                    android:id="@+id/tv_mdns_status"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="OFF"
-                    android:textColor="#CF6679"
-                    android:textSize="13sp"
-                    android:textStyle="bold"/>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- TCP Server Card -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="8dp"
-            app:cardBackgroundColor="#1E1E2E"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="4dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:padding="12dp">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="🖧 TCP Server"
-                        android:textColor="#FFFFFF"
-                        android:textSize="15sp"
-                        android:textStyle="bold"/>
-
-                    <TextView
-                        android:id="@+id/tv_tcp_detail"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Port 8899 | Stopped"
-                        android:textColor="#888888"
-                        android:textSize="11sp"
-                        android:paddingTop="4dp"/>
-                </LinearLayout>
-
-                <TextView
-                    android:id="@+id/tv_tcp_status"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="OFF"
-                    android:textColor="#CF6679"
-                    android:textSize="13sp"
-                    android:textStyle="bold"/>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- Video Projection Surface -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="8dp"
-            app:cardBackgroundColor="#000000"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="4dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_weight="1"
                 android:orientation="vertical">
 
-                <LinearLayout
-                    android:layout_width="match_parent"
+                <TextView
+                    android:id="@+id/tv_app_title"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:padding="4dp">
+                    android:letterSpacing="0.05"
+                    android:text="HICAR WIRELESS"
+                    android:textColor="@color/car_accent"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
 
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="🖥️ HiCar Projection Screen (可触摸)"
-                        android:textColor="#FFFFFF"
-                        android:textSize="13sp"
-                        android:textStyle="bold"
-                        android:padding="4dp"/>
-
-                    <Button
-                        android:id="@+id/btn_click_agree"
-                        android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:text="🔘 点按同意声明"
-                        android:textSize="11sp"
-                        android:backgroundTint="#03DAC5"
-                        android:textColor="#000000"/>
-                </LinearLayout>
-
-                <SurfaceView
-                    android:id="@+id/surface_view"
-                    android:layout_width="match_parent"
-                    android:layout_height="220dp"/>
+                <TextView
+                    android:id="@+id/tv_device_name"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="车载设备: HiCar (蓝牙可见)"
+                    android:textColor="@color/car_text_secondary"
+                    android:textSize="13sp" />
             </LinearLayout>
-        </androidx.cardview.widget.CardView>
 
-        <!-- Log Header -->
+            <!-- Debug Panel Toggle Button -->
+            <TextView
+                android:id="@+id/btn_toggle_debug"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_status_badge"
+                android:paddingStart="14dp"
+                android:paddingTop="6dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="6dp"
+                android:text="⚙️ 调试面板"
+                android:textColor="@color/car_text_secondary"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- Center Card: Connection Guidance & State -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
+            android:layout_centerInParent="true"
+            android:gravity="center_horizontal"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_car_card"
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:padding="28dp">
+
+                <!-- Status Badge -->
+                <TextView
+                    android:id="@+id/tv_status_badge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_status_badge"
+                    android:paddingStart="16dp"
+                    android:paddingTop="6dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="6dp"
+                    android:text="● 等待华为手机连接"
+                    android:textColor="@color/car_accent_green"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_headline"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:text="请在手机上发起连接"
+                    android:textColor="@color/car_text_primary"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_instructions"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:gravity="center"
+                    android:lineSpacingExtra="4dp"
+                    android:text="1. 打开华为手机【控制中心】点击【超级终端】\n2. 或在【设置 - 蓝牙】中选择「HiCar」进行配对\n3. 确认后将自动开启 1080P 无线全屏投屏"
+                    android:textColor="@color/car_text_secondary"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/tv_status_detail"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:text="广播就绪 | 5GHz Wi-Fi 直连已建立"
+                    android:textColor="@color/car_accent"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Footer Protocol Readiness Badges -->
+        <LinearLayout
+            android:id="@+id/footer_bar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_alignParentBottom="true"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tv_footer_ble"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="BLE 广播: 开启"
+                android:textColor="@color/car_text_secondary"
+                android:textSize="11sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="12dp"
+                android:text="|"
+                android:textColor="@color/car_card_border"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/tv_footer_wifi"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Wi-Fi P2P-GO: 就绪"
+                android:textColor="@color/car_text_secondary"
+                android:textSize="11sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="12dp"
+                android:text="|"
+                android:textColor="@color/car_card_border"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/tv_footer_audio"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="音频: 48kHz 立体声"
+                android:textColor="@color/car_text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </RelativeLayout>
+
+    <!-- Layer 2: Floating Developer / Diagnostics Overlay (Hidden by default) -->
+    <RelativeLayout
+        android:id="@+id/layout_debug_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="280dp"
+        android:layout_gravity="bottom"
+        android:background="@drawable/bg_debug_panel"
+        android:padding="12dp"
+        android:visibility="gone">
+
+        <!-- Debug Header -->
+        <LinearLayout
+            android:id="@+id/debug_header"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_alignParentTop="true"
             android:gravity="center_vertical"
-            android:paddingTop="8dp"
-            android:paddingBottom="4dp">
+            android:orientation="horizontal">
 
             <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Protocol Capture Log"
-                android:textColor="#BB86FC"
-                android:textSize="14sp"
-                android:textStyle="bold"/>
+                android:text="协议诊断日志 (Developer Diagnostics)"
+                android:textColor="@color/car_accent"
+                android:textSize="13sp"
+                android:textStyle="bold" />
 
             <Button
                 android:id="@+id/btn_copy_log"
                 android:layout_width="wrap_content"
                 android:layout_height="32dp"
-                android:text="Copy"
-                android:textSize="12sp"
-                android:backgroundTint="#3700B3"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"/>
+                android:layout_marginEnd="6dp"
+                android:minHeight="0dp"
+                android:text="复制"
+                android:textSize="11sp" />
 
             <Button
                 android:id="@+id/btn_clear_log"
                 android:layout_width="wrap_content"
                 android:layout_height="32dp"
-                android:layout_marginStart="4dp"
-                android:text="Clear"
-                android:textSize="12sp"
-                android:backgroundTint="#B00020"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"/>
+                android:layout_marginEnd="6dp"
+                android:minHeight="0dp"
+                android:text="清空"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/btn_close_debug"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:minHeight="0dp"
+                android:text="关闭"
+                android:textSize="11sp" />
         </LinearLayout>
 
-        <!-- Protocol Log -->
+        <!-- Log Content -->
         <ScrollView
             android:id="@+id/scroll_log"
             android:layout_width="match_parent"
-            android:layout_height="400dp"
-            android:background="#0D1117"
-            android:padding="4dp">
+            android:layout_height="match_parent"
+            android:layout_below="@id/debug_header"
+            android:layout_marginTop="6dp">
 
             <TextView
                 android:id="@+id/tv_log"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="[Waiting for connections...]\n"
-                android:textColor="#00FF00"
-                android:textSize="11sp"
                 android:fontFamily="monospace"
-                android:padding="4dp"
-                android:textIsSelectable="true"/>
+                android:textColor="#E0E0E0"
+                android:textSize="10sp" />
         </ScrollView>
+    </RelativeLayout>
 
-        <!-- Start All Button -->
-        <Button
-            android:id="@+id/btn_start_all"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:layout_marginTop="12dp"
-            android:layout_marginBottom="12dp"
-            android:text="▶  START ALL SERVICES"
-            android:textSize="15sp"
-            android:textStyle="bold"
-            android:backgroundTint="#03DAC5"/>
-
-    </LinearLayout>
-</ScrollView>
+</FrameLayout>

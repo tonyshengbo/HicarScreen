@@ -1,4 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#1A237E</color>
+    <color name="ic_launcher_background">#0A0D14</color>
+    <color name="car_bg">#0A0D14</color>
+    <color name="car_card_bg">#151B26</color>
+    <color name="car_card_border">#232B3A</color>
+    <color name="car_accent">#0A84FF</color>
+    <color name="car_accent_green">#30D158</color>
+    <color name="car_accent_orange">#FF9F0A</color>
+    <color name="car_text_primary">#F2F4F8</color>
+    <color name="car_text_secondary">#8A94A6</color>
+    <color name="car_badge_bg">#1A2232</color>
 </resources>

@@ -40,7 +40,16 @@ class HiCarServer(
     private val callback: Callback
 ) {
 
+    enum class ConnectionState {
+        IDLE,           // Waiting for phone discovery
+        CONNECTING,     // Phone connected, handshake/PAKE in progress
+        CONNECTED,      // Handshake complete, RTSP streaming starting
+        PROJECTING,     // Active video & audio projection
+        DISCONNECTED    // Disconnected, resetting
+    }
+
     interface Callback {
+        fun onStateChanged(state: ConnectionState, detail: String)
         fun onMdnsStatusChanged(registered: Boolean, detail: String)
         fun onTcpStatusChanged(running: Boolean, detail: String)
         fun onDataReceived(clientInfo: String, data: ByteArray)
@@ -73,8 +82,14 @@ class HiCarServer(
     private val controlLock = Any()
     private val touchRandom = java.security.SecureRandom()
     private val touchExecutor: ExecutorService = Executors.newSingleThreadExecutor()
-    private val videoDecoder = H264RtpDecoder()
-    private val audioPlayer = AacAudioPlayer()
+    private val videoDecoder = H264RtpDecoder().apply {
+        callback = object : H264RtpDecoder.Callback {
+            override fun onFirstFrameRendered() {
+                this@HiCarServer.callback.onStateChanged(ConnectionState.PROJECTING, "投屏中 (1080P 60FPS)")
+            }
+        }
+    }
+    private val audioPlayer = AacAudioPlayer(context)
     private val running = AtomicBoolean(false)
     private val executor: ExecutorService = Executors.newCachedThreadPool()
     private var registrationListener: NsdManager.RegistrationListener? = null
@@ -87,6 +102,7 @@ class HiCarServer(
 
     fun start() {
         if (running.getAndSet(true)) return
+        callback.onStateChanged(ConnectionState.IDLE, "广播就绪，等待手机连接...")
         audioPlayer.start()
         startTcpServer(TCP_PORT)
         startTcpServer(TCP_PORT_ALT)
@@ -96,6 +112,7 @@ class HiCarServer(
 
     fun stop() {
         running.set(false)
+        callback.onStateChanged(ConnectionState.DISCONNECTED, "服务已停止")
         videoDecoder.stopDecoder()
         audioPlayer.stop()
         unregisterMdns()
@@ -153,6 +170,7 @@ class HiCarServer(
     private fun handleClient(socket: Socket, port: Int) {
         executor.submit {
             val clientInfo = "${socket.inetAddress.hostAddress}:${socket.port} -> :$port"
+            callback.onStateChanged(ConnectionState.CONNECTING, "手机已连入 ($clientInfo)")
             callback.onTcpStatusChanged(true, "Client connected: $clientInfo")
             Log.i(TAG, "Client connected: $clientInfo")
 
@@ -734,6 +752,7 @@ class HiCarServer(
                     Log.e(TAG, "HiSight RTSP: sessionKey is null!")
                     return@submit
                 }
+                callback.onStateChanged(ConnectionState.CONNECTED, "认证成功，正在开启投屏通道...")
                 val keySpec = SecretKeySpec(sessionKey.copyOfRange(0, 16), "AES")
                 val secureRandom = java.security.SecureRandom()
                 var rtspEncrypted = false
@@ -963,6 +982,7 @@ class HiCarServer(
                 Log.e(TAG, "HiSight RTSP client exception: ${e.message}", e)
             } finally {
                 try { rtspSocket?.close() } catch (_: Exception) {}
+                callback.onStateChanged(ConnectionState.DISCONNECTED, "会话断开，等待重新连接...")
             }
         }
     }

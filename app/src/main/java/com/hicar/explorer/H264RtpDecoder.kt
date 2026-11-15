@@ -13,6 +13,12 @@ import javax.crypto.spec.SecretKeySpec
 
 class H264RtpDecoder {
 
+    interface Callback {
+        fun onFirstFrameRendered()
+    }
+
+    var callback: Callback? = null
+
     companion object {
         private const val TAG = "H264RtpDecoder"
         private val START_CODE = byteArrayOf(0, 0, 0, 1)
@@ -102,7 +108,10 @@ class H264RtpDecoder {
                 if (outIndex >= 0) {
                     c.releaseOutputBuffer(outIndex, true)
                     frameCount++
-                    if (frameCount == 1L || frameCount <= 5L || frameCount % 60L == 0L) {
+                    if (frameCount == 1L) {
+                        Log.i(TAG, "🖥️ FIRST video frame rendered to SurfaceView!")
+                        callback?.onFirstFrameRendered()
+                    } else if (frameCount <= 5L || frameCount % 60L == 0L) {
                         Log.i(TAG, "🖥️ Rendered video frame #$frameCount to SurfaceView!")
                     }
                 } else if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
