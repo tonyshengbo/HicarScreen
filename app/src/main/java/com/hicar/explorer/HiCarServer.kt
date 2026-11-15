@@ -261,50 +261,43 @@ class HiCarServer(
                 try {
                     val innerHeaderLen = 18
                     val payloadLen = innerHeaderLen + length
-                    val binFrame = ByteArray(11 + payloadLen)
+                    val binFrame = ByteArray(6 + payloadLen)
 
                     val seq = micSeq.getAndIncrement()
                     val timeUs = System.nanoTime() / 1000L
 
-                    // 11-byte DMSDP binary transport header
-                    binFrame[0] = 0x24.toByte() // '$'
-                    // Module (DataSessionID, 4 bytes big-endian)
-                    binFrame[1] = ((dataSessionId shr 24) and 0xFF).toByte()
-                    binFrame[2] = ((dataSessionId shr 16) and 0xFF).toByte()
-                    binFrame[3] = ((dataSessionId shr 8) and 0xFF).toByte()
-                    binFrame[4] = (dataSessionId and 0xFF).toByte()
+                    // DMSDP Audio Datagram Transport Header (6 bytes):
+                    // Bytes 0..3: DataSessionID (4 bytes big-endian, read as module by phone's OnDatagramNotify)
+                    binFrame[0] = ((dataSessionId shr 24) and 0xFF).toByte()
+                    binFrame[1] = ((dataSessionId shr 16) and 0xFF).toByte()
+                    binFrame[2] = ((dataSessionId shr 8) and 0xFF).toByte()
+                    binFrame[3] = (dataSessionId and 0xFF).toByte()
 
-                    // Type (0xFEDCBA02: VirMic audio stream, 4 bytes big-endian)
-                    binFrame[5] = 0xFE.toByte()
-                    binFrame[6] = 0xDC.toByte()
-                    binFrame[7] = 0xBA.toByte()
-                    binFrame[8] = 0x02.toByte()
-
-                    // Payload length (2 bytes big-endian)
-                    binFrame[9] = ((payloadLen shr 8) and 0xFF).toByte()
-                    binFrame[10] = (payloadLen and 0xFF).toByte()
+                    // Bytes 4..5: Payload length (18 + length, 2 bytes big-endian)
+                    binFrame[4] = ((payloadLen shr 8) and 0xFF).toByte()
+                    binFrame[5] = (payloadLen and 0xFF).toByte()
 
                     // 18-byte inner header:
-                    // Bytes 0..3: seq (4 bytes big-endian)
-                    binFrame[11] = ((seq shr 24) and 0xFF).toByte()
-                    binFrame[12] = ((seq shr 16) and 0xFF).toByte()
-                    binFrame[13] = ((seq shr 8) and 0xFF).toByte()
-                    binFrame[14] = (seq and 0xFF).toByte()
-                    // Bytes 4..5: pcmLen (2 bytes big-endian)
-                    binFrame[15] = ((length shr 8) and 0xFF).toByte()
-                    binFrame[16] = (length and 0xFF).toByte()
-                    // Bytes 6..13: timeUs (8 bytes big-endian)
+                    // Bytes 6..9: seq (4 bytes big-endian)
+                    binFrame[6] = ((seq shr 24) and 0xFF).toByte()
+                    binFrame[7] = ((seq shr 16) and 0xFF).toByte()
+                    binFrame[8] = ((seq shr 8) and 0xFF).toByte()
+                    binFrame[9] = (seq and 0xFF).toByte()
+                    // Bytes 10..11: pcmLen (2 bytes big-endian)
+                    binFrame[10] = ((length shr 8) and 0xFF).toByte()
+                    binFrame[11] = (length and 0xFF).toByte()
+                    // Bytes 12..19: timeUs (8 bytes big-endian)
                     for (i in 0..7) {
-                        binFrame[17 + i] = ((timeUs shr (56 - i * 8)) and 0xFF).toByte()
+                        binFrame[12 + i] = ((timeUs shr (56 - i * 8)) and 0xFF).toByte()
                     }
-                    // Bytes 14..17: flags / dataType = 0 (4 bytes big-endian)
-                    binFrame[25] = 0
-                    binFrame[26] = 0
-                    binFrame[27] = 0
-                    binFrame[28] = 0
+                    // Bytes 20..23: flags / dataType = 0 (4 bytes big-endian)
+                    binFrame[20] = 0
+                    binFrame[21] = 0
+                    binFrame[22] = 0
+                    binFrame[23] = 0
 
-                    // Bytes 18..: raw PCM audio data
-                    System.arraycopy(pcmData, offset, binFrame, 11 + innerHeaderLen, length)
+                    // Bytes 24..: raw PCM audio data
+                    System.arraycopy(pcmData, offset, binFrame, 24, length)
 
                     val useCrypto = isCryptoActive && btServer.getSessionKey() != null
                     val magic = if (useCrypto) 0xAB.toByte() else 0x00.toByte()
@@ -553,15 +546,15 @@ class HiCarServer(
                 put("status", org.json.JSONObject())
                 put("properties", org.json.JSONObject().apply {
                     put("2003", org.json.JSONArray().apply {
-                        put(48000)
                         put(16000)
-                    }) // Sample rates
+                        put(48000)
+                    }) // Sample rates (prefer 16kHz for speech recognition / Celia)
                     put("2004", org.json.JSONArray().apply {
                         put(1) // PCM Codec
                     })
                     put("2005", org.json.JSONArray().apply {
-                        put(12) // Stereo (AudioFormat.CHANNEL_IN_STEREO = 12)
                         put(16) // Mono (AudioFormat.CHANNEL_IN_MONO = 16)
+                        put(12) // Stereo (AudioFormat.CHANNEL_IN_STEREO = 12)
                     })
                 })
             }.toString().toByteArray(StandardCharsets.UTF_8)
@@ -765,8 +758,8 @@ class HiCarServer(
                                 micRecorder.stopRecording()
                             } else {
                                 val dataSessionId = headers["datasessionid"]?.toIntOrNull() ?: 100000001
-                                var sampleRate = 48000
-                                var channelNum = 2
+                                var sampleRate = 16000
+                                var channelNum = 1
                                 val paraAudio = headers["paraaudio"] ?: (if (message.contains("ParaAudio:")) message.substringAfter("ParaAudio:").substringBefore("\r\n").trim() else "")
                                 if (paraAudio.isNotEmpty()) {
                                     for (part in paraAudio.split(";")) {

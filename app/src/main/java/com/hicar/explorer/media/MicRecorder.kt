@@ -22,8 +22,8 @@ class MicRecorder(private val context: Context) {
 
     companion object {
         private const val TAG = "MicRecorder"
-        const val DEFAULT_SAMPLE_RATE = 48000
-        const val VOICE_SAMPLE_RATE = 16000
+        const val DEFAULT_SAMPLE_RATE = 16000
+        const val HD_SAMPLE_RATE = 48000
     }
 
     interface Callback {
@@ -46,7 +46,7 @@ class MicRecorder(private val context: Context) {
      * @param channelCount 2 for stereo, 1 for mono
      */
     @Synchronized
-    fun startRecording(dataSessionId: Int, sampleRate: Int = DEFAULT_SAMPLE_RATE, channelCount: Int = 2) {
+    fun startRecording(dataSessionId: Int, sampleRate: Int = DEFAULT_SAMPLE_RATE, channelCount: Int = 1) {
         if (isRecording.get()) {
             if (currentSessionId == dataSessionId) {
                 Log.d(TAG, "Already recording for session $dataSessionId")
@@ -73,10 +73,11 @@ class MicRecorder(private val context: Context) {
         val audioFormat = AudioFormat.ENCODING_PCM_16BIT
         val bytesPerSample = 2 // 16-bit PCM = 2 bytes
 
-        // Calculate 20ms chunk size
-        // e.g., 48000 * 2 channels * 2 bytes * 0.02s = 3840 bytes
-        // e.g., 16000 * 1 channel  * 2 bytes * 0.02s = 640 bytes
-        val chunkSize = (sampleRate * channelCount * bytesPerSample * 20) / 1000
+        // Calculate chunk size ensuring frame fits within DMSDP 1400-byte MTU:
+        // For 16kHz mono: 20ms = 640 bytes (640 + 24B = 664B <= 1400B)
+        // For 48kHz stereo: 5ms = 960 bytes (960 + 24B = 984B <= 1400B)
+        val chunkDurationMs = if (sampleRate > 16000) 5 else 20
+        val chunkSize = (sampleRate * channelCount * bytesPerSample * chunkDurationMs) / 1000
 
         val minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
         if (minBufSize <= 0) {
