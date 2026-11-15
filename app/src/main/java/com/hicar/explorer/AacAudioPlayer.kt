@@ -2,9 +2,11 @@ package com.hicar.explorer
 
 import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioTrack
 import android.media.MediaCodec
 import android.media.MediaFormat
+import android.os.Build
 import android.util.Log
 import java.nio.ByteBuffer
 
@@ -35,23 +37,35 @@ class AacAudioPlayer {
             val minBufferSize = AudioTrack.getMinBufferSize(SAMPLE_RATE, channelConfig, encoding)
             val bufferSize = maxOf(minBufferSize * 4, 32768)
 
-            audioTrack = AudioTrack.Builder()
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .build()
+            audioTrack = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build()
+                    )
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(encoding)
+                            .setSampleRate(SAMPLE_RATE)
+                            .setChannelMask(channelConfig)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(bufferSize)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .build()
+            } else {
+                @Suppress("DEPRECATION")
+                AudioTrack(
+                    AudioManager.STREAM_MUSIC,
+                    SAMPLE_RATE,
+                    channelConfig,
+                    encoding,
+                    bufferSize,
+                    AudioTrack.MODE_STREAM
                 )
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(encoding)
-                        .setSampleRate(SAMPLE_RATE)
-                        .setChannelMask(channelConfig)
-                        .build()
-                )
-                .setBufferSizeInBytes(bufferSize)
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .build()
+            }
 
             audioTrack?.play()
 
@@ -120,7 +134,12 @@ class AacAudioPlayer {
             val adtsPacket = ensureAdts(data, offset, length)
             val inIndex = c.dequeueInputBuffer(10_000L) // 10ms timeout
             if (inIndex >= 0) {
-                val inBuffer = c.getInputBuffer(inIndex) ?: return
+                val inBuffer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    c.getInputBuffer(inIndex)
+                } else {
+                    @Suppress("DEPRECATION")
+                    c.inputBuffers[inIndex]
+                } ?: return
                 inBuffer.clear()
                 inBuffer.put(adtsPacket)
                 val ptsUs = frameCount * 1024L * 1_000_000L / SAMPLE_RATE
@@ -148,7 +167,12 @@ class AacAudioPlayer {
                 val c = codec ?: break
                 val outIndex = c.dequeueOutputBuffer(info, 10_000L)
                 if (outIndex >= 0) {
-                    val outBuffer = c.getOutputBuffer(outIndex)
+                    val outBuffer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        c.getOutputBuffer(outIndex)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        c.outputBuffers[outIndex]
+                    }
                     if (outBuffer != null && info.size > 0) {
                         outBuffer.position(info.offset)
                         outBuffer.limit(info.offset + info.size)

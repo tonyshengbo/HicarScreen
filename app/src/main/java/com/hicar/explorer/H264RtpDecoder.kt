@@ -300,7 +300,12 @@ class H264RtpDecoder {
         try {
             val inIndex = activeCodec.dequeueInputBuffer(10000)
             if (inIndex >= 0) {
-                val inBuf = activeCodec.getInputBuffer(inIndex)
+                val inBuf = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    activeCodec.getInputBuffer(inIndex)
+                } else {
+                    @Suppress("DEPRECATION")
+                    activeCodec.inputBuffers[inIndex]
+                }
                 if (inBuf != null) {
                     inBuf.clear()
                     inBuf.put(data, offset, length)
