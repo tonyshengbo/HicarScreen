@@ -5,6 +5,7 @@ import android.media.MediaCodec
 import android.media.MediaFormat
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
 import java.io.ByteArrayOutputStream
@@ -62,9 +63,16 @@ class HiCarServer(
     private var dmsdpServerSocket: ServerSocket? = null
     private var udpSocket: java.net.DatagramSocket? = null
     private var videoTcpSocket: java.net.Socket? = null
+    data class TouchPointer(
+        val id: Int,
+        val x: Int,
+        val y: Int
+    )
+
     private var controlTcpSocket: java.net.Socket? = null
     private val controlLock = Any()
     private val touchRandom = java.security.SecureRandom()
+    private val touchExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val videoDecoder = H264RtpDecoder()
     private val audioPlayer = AacAudioPlayer()
     private val running = AtomicBoolean(false)
@@ -905,7 +913,7 @@ class HiCarServer(
                                 append("his_audio_codecs: 1\r\n")
                                 append("his_media_capability: 0\r\n")
                                 append("his_player_controller_capability: 0\r\n")
-                                append("his_uibc_capability: input_category_list=GENERIC;generic_cap_list=left_point_down, left_point_up, left_move, left_key_down, left_key_up, mouse_down, mouse_up, mouse_move;\r\n")
+                                append("his_uibc_capability: input_category_list=GENERIC;generic_cap_list=left_point_down, left_point_up, left_move, left_key_down, left_key_up, zoom, vertical_scroll, horizontal_scroll, rotate, mouse_down, mouse_up, mouse_move;\r\n")
                                 // Crucial: height must be at end without trailing semicolon for AirSharing parser
                                 append("his_video_formats: codecs 1;fps 60;width 1920;gop 60;dpi 160;bitrate 10000000;asymmetric 0;height 1080\r\n")
                             }.toString()
@@ -1129,47 +1137,54 @@ class HiCarServer(
     }
 
     /**
-     * Send encrypted reverse touch event to phone over RemoteControl TCP socket.
+     * Send encrypted reverse touch events (supporting multi-touch) to phone over RemoteControl TCP socket.
      * action: 0 = ACTION_DOWN, 1 = ACTION_UP, 2 = ACTION_MOVE
-     * x: 0..1920 (HiCar virtual display width)
-     * y: 0..1080 (HiCar virtual display height)
+     * pointers: list of active TouchPointer objects
      */
-    fun sendTouchEvent(action: Int, x: Int, y: Int) {
-        executor.submit {
+    fun sendTouchEvents(action: Int, pointers: List<TouchPointer>) {
+        if (pointers.isEmpty()) return
+        touchExecutor.submit {
             try {
                 val sock = synchronized(controlLock) { controlTcpSocket }
                 if (sock == null || sock.isClosed) {
-                    Log.w(TAG, "Cannot send touch event: controlTcpSocket is not connected")
                     return@submit
                 }
-                val sessionKey = btServer.getSessionKey()
-                if (sessionKey == null) {
-                    Log.w(TAG, "Cannot send touch event: sessionKey is null")
-                    return@submit
+                val sessionKey = btServer.getSessionKey() ?: return@submit
+
+                val numPointers = pointers.size.coerceIn(1, 10)
+                val pointerDataLen = numPointers * 5
+                val bodyLen = 1 + pointerDataLen + 4 // 1 byte count + (count * 5) coords + 4 bytes timestamp
+                val plainLen = 6 + 1 + 2 + bodyLen
+                val plain = ByteArray(plainLen)
+
+                // Bytes 0..5: 6 timestamp/reserved bytes (all 0)
+                // Byte 6: action (0 = DOWN, 1 = UP, 2 = MOVE)
+                // Bytes 7..8: bodyLen (16-bit big-endian)
+                // Byte 9: numPointers
+                plain[6] = action.toByte()
+                plain[7] = ((bodyLen shr 8) and 0xFF).toByte()
+                plain[8] = (bodyLen and 0xFF).toByte()
+                plain[9] = numPointers.toByte()
+
+                for (i in 0 until numPointers) {
+                    val p = pointers[i]
+                    val offset = 10 + i * 5
+                    plain[offset] = (p.id and 0xFF).toByte()
+                    val px = p.x.coerceIn(0, 1920)
+                    val py = p.y.coerceIn(0, 1080)
+                    plain[offset + 1] = ((px shr 8) and 0xFF).toByte()
+                    plain[offset + 2] = (px and 0xFF).toByte()
+                    plain[offset + 3] = ((py shr 8) and 0xFF).toByte()
+                    plain[offset + 4] = (py and 0xFF).toByte()
                 }
 
-                val clampedX = x.coerceIn(0, 1920)
-                val clampedY = y.coerceIn(0, 1080)
-
-                // Plaintext payload (15 bytes):
-                // Bytes 0..5: 6 reserved / timestamp bytes (all 0)
-                // Bytes 6..14: 9-byte generic touch inputBody:
-                //   byte 6: action (0 = DOWN, 1 = UP, 2 = MOVE)
-                //   byte 7..8: bodyLen = 6 (1 byte numPointers + 5 bytes pointer info)
-                //   byte 9: numPointers = 1 (crucial: must NOT be 0!)
-                //   byte 10: pointerId = 0
-                //   byte 11..12: X coordinate (16-bit big-endian)
-                //   byte 13..14: Y coordinate (16-bit big-endian)
-                val plain = ByteArray(15)
-                plain[6] = action.toByte() // 0 = DOWN, 1 = UP, 2 = MOVE
-                plain[7] = 0x00            // bodyLen high byte
-                plain[8] = 0x06            // bodyLen low byte (6)
-                plain[9] = 0x01            // numPointers = 1
-                plain[10] = 0x00           // pointerId = 0
-                plain[11] = (clampedX shr 8).toByte()
-                plain[12] = (clampedX and 0xFF).toByte()
-                plain[13] = (clampedY shr 8).toByte()
-                plain[14] = (clampedY and 0xFF).toByte()
+                // 4-byte timestamp at the end of inputBody
+                val timeOffset = 10 + pointerDataLen
+                val nowMs = SystemClock.uptimeMillis().toInt()
+                plain[timeOffset] = ((nowMs shr 24) and 0xFF).toByte()
+                plain[timeOffset + 1] = ((nowMs shr 16) and 0xFF).toByte()
+                plain[timeOffset + 2] = ((nowMs shr 8) and 0xFF).toByte()
+                plain[timeOffset + 3] = (nowMs and 0xFF).toByte()
 
                 val iv = ByteArray(16).apply { touchRandom.nextBytes(this) }
                 val cipher = Cipher.getInstance("AES/CTR/NoPadding")
@@ -1178,30 +1193,33 @@ class HiCarServer(
                     SecretKeySpec(sessionKey.copyOfRange(0, 16), "AES"),
                     IvParameterSpec(iv)
                 )
-                val cipherText = cipher.doFinal(plain) // 15 bytes
+                val cipherText = cipher.doFinal(plain)
 
-                // 35-byte packet on the wire:
-                // Bytes 0..3: 4-byte header (category=0, type=0, totalLen=35)
-                // Bytes 4..19: 16-byte random IV
-                // Bytes 20..34: 15-byte AES-128-CTR ciphertext
-                val packet = ByteArray(35)
+                val totalLen = 4 + 16 + cipherText.size
+                val packet = ByteArray(totalLen)
                 packet[0] = 0x00 // categoryType = 0 (generic input)
                 packet[1] = 0x00 // payloadType = 0
-                packet[2] = 0x00 // totalLength = 35 (0x0023)
-                packet[3] = 0x23
+                packet[2] = ((totalLen shr 8) and 0xFF).toByte()
+                packet[3] = (totalLen and 0xFF).toByte()
                 System.arraycopy(iv, 0, packet, 4, 16)
-                System.arraycopy(cipherText, 0, packet, 20, 15)
+                System.arraycopy(cipherText, 0, packet, 20, cipherText.size)
 
                 synchronized(controlLock) {
                     val out = sock.getOutputStream()
                     out.write(packet)
                     out.flush()
                 }
-                Log.d(TAG, "🎮 Sent touch event: action=$action, pos=($clampedX, $clampedY)")
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending touch event: ${e.message}")
             }
         }
+    }
+
+    /**
+     * Backward-compatible single touch event helper.
+     */
+    fun sendTouchEvent(action: Int, x: Int, y: Int) {
+        sendTouchEvents(action, listOf(TouchPointer(0, x, y)))
     }
 
     /**

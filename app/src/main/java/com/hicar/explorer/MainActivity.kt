@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -110,21 +111,47 @@ class MainActivity : AppCompatActivity() {
             val h = v.height.toFloat()
             if (w <= 0f || h <= 0f) return@setOnTouchListener false
 
-            val x = ((event.x / w) * 1920f).toInt().coerceIn(0, 1920)
-            val y = ((event.y / h) * 1080f).toInt().coerceIn(0, 1080)
-
-            val action = when (event.actionMasked) {
-                android.view.MotionEvent.ACTION_DOWN -> 0
-                android.view.MotionEvent.ACTION_UP -> 1
-                android.view.MotionEvent.ACTION_MOVE -> 2
-                android.view.MotionEvent.ACTION_CANCEL -> 1
-                else -> -1
+            fun getPointers(excludeIndex: Int = -1): List<HiCarServer.TouchPointer> {
+                val list = ArrayList<HiCarServer.TouchPointer>()
+                for (i in 0 until event.pointerCount) {
+                    if (i == excludeIndex) continue
+                    val pid = event.getPointerId(i)
+                    val px = ((event.getX(i) / w) * 1920f).toInt().coerceIn(0, 1920)
+                    val py = ((event.getY(i) / h) * 1080f).toInt().coerceIn(0, 1080)
+                    list.add(HiCarServer.TouchPointer(pid, px, py))
+                }
+                return list
             }
 
-            if (action >= 0) {
-                hiCarServer.sendTouchEvent(action, x, y)
-                if (action != 2) {
-                    appendLog("👆 Touch: action=${if (action == 0) "DOWN" else "UP"}, pos=($x, $y)")
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    val pointers = getPointers()
+                    hiCarServer.sendTouchEvents(0, pointers)
+                    appendLog("👆 Touch DOWN: (${pointers[0].x}, ${pointers[0].y})")
+                }
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    val pointers = getPointers()
+                    hiCarServer.sendTouchEvents(0, pointers)
+                    appendLog("✌️ Multi-touch DOWN: ${pointers.size} fingers")
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val pointers = getPointers()
+                    hiCarServer.sendTouchEvents(2, pointers)
+                }
+                MotionEvent.ACTION_POINTER_UP -> {
+                    val upIndex = event.actionIndex
+                    val remaining = getPointers(excludeIndex = upIndex)
+                    if (remaining.isNotEmpty()) {
+                        hiCarServer.sendTouchEvents(2, remaining)
+                    }
+                    appendLog("✌️ Multi-touch UP: remaining ${remaining.size} fingers")
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    val pointers = getPointers()
+                    hiCarServer.sendTouchEvents(1, pointers)
+                    if (pointers.isNotEmpty()) {
+                        appendLog("👆 Touch UP: (${pointers[0].x}, ${pointers[0].y})")
+                    }
                 }
             }
             true
