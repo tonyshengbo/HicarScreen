@@ -1,0 +1,71 @@
+# Built application files
+*.apk
+*.aar
+*.ap_
+*.aab
+
+# Files for the ART/Dalvik VM
+*.dex
+*.cdex
+*.vdex
+
+# Java class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+build/
+app/build/
+**/build/
+
+# Gradle files
+.gradle/
+.kotlin/
+buildOutputCleanup/
+app/.gradle/
+
+# Android Studio / IntelliJ IDEA
+*.iml
+.idea/
+misc.xml
+deploymentTargetDropDown.xml
+render.experimental.xml
+
+# Local configuration file (sdk path, etc)
+local.properties
+app/local.properties
+**/local.properties
+
+# Log files
+*.log
+
+# Android Profiling
+*.hprof
+
+# macOS
+.DS_Store
+
+# Reverse engineering and research artifacts in root
+AirSharing*
+Hw*
+iConnect*
+nearbysdk*
+nearby*
+cfr.jar
+libsoftbus.so
+decompiled*/
+dmsdp_libs/
+jadx*/
+jadx.zip
+hicar_extracted/
+HANDOVER.md
+*.py
+*.zip
+*.tar*
+
+# Exclude root-level dumps and images
+/*.png
+/*.xml
+/*.jar
